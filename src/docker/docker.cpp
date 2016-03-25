@@ -403,8 +403,10 @@ Try<Docker::Image> Docker::Image::create(const JSON::Object& json)
 
   return Docker::Image(entrypointOption, envOption);
 }
-
-//TODO(gokrokve) remove this as a redundant
+// <<<<<<<<    Begin of Mirantis changes >>>>>>>>
+//
+//TODO(gokrokve) This method is called to prepare volume filesystem
+// It should work in general but should be properly tested
 Future<Nothing> Docker::prepare_volume(
 		const std::string& volume,
 				  const std::string& name,
@@ -414,19 +416,7 @@ Future<Nothing> Docker::prepare_volume(
 				  ) const{
 	map<string, string> environment = os::environment();
 	 environment["HOME"] = sandboxDirectory;
-	  //TODO(gokrokve) move to a separate function
-	  //We will try to create network first
 	   vector<string> net_argv;
-//	   net_argv.push_back(path);
-//	   net_argv.push_back("-H");
-//	   net_argv.push_back(socket);
-//	   net_argv.push_back("network");
-//	   net_argv.push_back("create");
-////	   net_argv.push_back("--driver");
-////	   net_argv.push_back("calico");
-//	   net_argv.push_back("--subnet");
-//	   net_argv.push_back(strings::join("", ip, "/32"));
-//	   net_argv.push_back(name);
 
 	   string n_cmd = strings::join("",
 			   "$(dev=`rbd map ",volume,"`;mkfs.xfs $dev;rbd unmap $dev; echo true)");
@@ -463,7 +453,6 @@ Future<Nothing> Docker::run(
     const process::Subprocess::IO& stdout,
     const process::Subprocess::IO& stderr) const
 {
-//return Failure("<<<<<Achtung!!!>>>>> No docker info found in container info");
   if (!containerInfo.has_docker()) {
     return Failure("No docker info found in container info");
   }
@@ -565,7 +554,8 @@ Future<Nothing> Docker::run(
 
   const string& image = dockerInfo.image();
 
-
+ //TODO(gokrokve) This is a POC change for networking support
+ // It should be done properly via Protobuf change
   string network;
   switch (dockerInfo.network()) {
     case ContainerInfo::DockerInfo::HOST: network = "host"; break;
@@ -574,14 +564,18 @@ Future<Nothing> Docker::run(
     default: return Failure("Unsupported Network mode: " +
                             stringify(dockerInfo.network()));
   }
-
+// We use NetworkingInfr message which is a part of DockerInfo definition
+// No protobuf chnage is required here 
   foreach(const NetworkInfo& net_info, containerInfo.network_infos()) {
     if (net_info.has_ip_address()) {
     	VLOG(1) << "Provided IP:" << net_info.ip_address();
     	argv.push_back("--ip");
     	argv.push_back(net_info.ip_address());
     }
+
     //TODO(gokrokve) this can be done in more generic way via parameters
+    // This part actually is a workaround as in current Protobuf definition
+    // there is no place for Network_ID, so we pass it as a label
     if (net_info.has_labels()) {
     	VLOG(1) << "Adding network from labels";
     	foreach (const Label& label, net_info.labels().labels()) {
@@ -592,11 +586,13 @@ Future<Nothing> Docker::run(
     	}
     }
     }
-
+// This will keep this code backward compatible. If no netowrk_id passed network variable will have
+// a value from original DockerInfo network parameter (bridge, host or none)
   argv.push_back("--net");
   argv.push_back(network);
 
-
+// <<<<<<< End of Mirantis changes >>>>>>
+//
   if (containerInfo.has_hostname()) {
     if (network == "host") {
       return Failure("Unable to set hostname with host network mode");
